@@ -1,5 +1,5 @@
 """
-Kafka producer – publishes journey.accepted / journey.rejected events.
+Kafka producer - publishes journey.accepted / journey.rejected events.
 """
 
 import json

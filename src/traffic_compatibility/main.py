@@ -1,5 +1,5 @@
 """
-Traffic/Compatibility Service – CS7NS6 Group H
+Traffic/Compatibility Service - CS7NS6 Group H
 Marta Fraioli
 
 Responsibilities:
@@ -46,13 +46,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Traffic/Compatibility Service",
-    description=f"Region: {REGION.upper()} – Validates journey requests against road conditions.",
+    description=f"Region: {REGION.upper()} - Validates journey requests against road conditions.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
+# Health check
 
 @app.get("/health")
 def health():
@@ -68,7 +68,7 @@ def status():
     }
 
 
-# ── Traffic Authority API ─────────────────────────────────────────────────────
+# Traffic Authority API
 
 class RoadClosure(BaseModel):
     segment_id: str

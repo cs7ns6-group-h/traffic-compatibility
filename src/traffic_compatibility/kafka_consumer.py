@@ -1,5 +1,5 @@
 """
-Kafka consumer – subscribes to journey.requested topic
+Kafka consumer - subscribes to journey.requested topic
 and triggers compatibility checks.
 """
 
@@ -12,6 +12,9 @@ from confluent_kafka import Consumer, KafkaError
 from src.traffic_compatibility.router import compute_route, check_compatibility
 from src.traffic_compatibility.kafka_producer import publish_decision
 from src.traffic_compatibility.cassandra_client import update_booking_status
+
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

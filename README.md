@@ -1,4 +1,4 @@
-# traffic-compatibility – CS7NS6 Group H
+# traffic-compatibility - CS7NS6 Group H
 
 **Owner:** Marta Fraioli
 

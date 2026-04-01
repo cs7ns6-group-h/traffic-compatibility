@@ -1,5 +1,5 @@
 """
-Cassandra client – reads and writes booking status.
+Cassandra client - reads and writes booking status.
 """
 
 import logging

@@ -1,5 +1,5 @@
 """
-Router – route computation and compatibility checks.
+Router - route computation and compatibility checks.
 
 For the demo, uses a simplified mock implementation.
 In production: pre-processed OSM contracted hierarchy graph.
