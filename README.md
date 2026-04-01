@@ -37,8 +37,11 @@ uvicorn src.traffic_compatibility.main:app --reload
 | GET | `/health` | Health check |
 | GET | `/status` | Active closures and monitored segments |
 | POST | `/authority/closure` | Submit road closure (Traffic Authority) |
+| DELETE | `/authority/closure/{segment_id}` | Remove road closure (Traffic Authority) |
+| GET | `/authority/closures` | List all active road closures |
 | POST | `/authority/traffic` | Submit congestion update (Traffic Authority) |
 | POST | `/authority/emergency` | Issue emergency override (Traffic Authority) |
+| GET | `/authority/segments/{segment_id}/journeys` | Get active journeys on a segment |
 
 ## Environment Variables
 

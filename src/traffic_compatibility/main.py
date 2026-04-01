@@ -20,11 +20,11 @@ from pydantic import BaseModel
 
 from src.traffic_compatibility.kafka_consumer import start_consumer
 from src.traffic_compatibility.kafka_producer import publish_decision
-from src.traffic_compatibility.cassandra_client import update_booking_status
 from src.traffic_compatibility.router import compute_route, check_compatibility
 
 from src.traffic_compatibility.state import road_closures, traffic_conditions
 from src.traffic_compatibility.cassandra_client import get_journeys_by_segment
+from fastapi import FastAPI, HTTPException
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -100,14 +100,7 @@ def submit_traffic(update: TrafficUpdate):
     logger.info(f"[{REGION.upper()}] Traffic update: {update.segment_id} = {update.congestion_level}")
     return {"status": "accepted"}
 
-
 @app.post("/authority/emergency", summary="Issue emergency override")
-def emergency_override(override: EmergencyOverride):
-    logger.warning(f"[{REGION.upper()}] Emergency override on segment: {override.segment_id}")
-    # TODO: publish journey.cancelled for all active journeys on this segment
-    return {"status": "override_issued", "segment_id": override.segment_id}
-
-@app.post("/authority/emergency")
 def emergency_override(override: EmergencyOverride):
     from datetime import datetime
     date_bucket = datetime.now().strftime("%Y-%m-%d")
@@ -130,4 +123,35 @@ def emergency_override(override: EmergencyOverride):
         "status": "override_issued",
         "segment_id": override.segment_id,
         "journeys_cancelled": len(journey_ids)
+    }
+@app.get("/authority/closures", summary="List active road closures")
+def list_closures():
+    return {
+        "region": REGION,
+        "closures": [c.model_dump() for c in road_closures]
+    }
+
+
+@app.delete("/authority/closure/{segment_id}", summary="Remove road closure")
+def remove_closure(segment_id: str):
+    global road_closures
+    before = len(road_closures)
+    road_closures = [c for c in road_closures if c.segment_id != segment_id]
+    removed = before - len(road_closures)
+    if removed == 0:
+        raise HTTPException(status_code=404, detail=f"No closure found for segment {segment_id}")
+    logger.info(f"[{REGION.upper()}] Removed closure for segment {segment_id}")
+    return {"status": "removed", "segment_id": segment_id}
+
+
+@app.get("/authority/segments/{segment_id}/journeys", summary="Get active journeys on segment")
+def get_segment_journeys(segment_id: str):
+    from datetime import datetime
+    date_bucket = datetime.now().strftime("%Y-%m-%d")
+    journey_ids = get_journeys_by_segment(segment_id, date_bucket)
+    return {
+        "segment_id": segment_id,
+        "date_bucket": date_bucket,
+        "active_journeys": journey_ids,
+        "count": len(journey_ids)
     }
