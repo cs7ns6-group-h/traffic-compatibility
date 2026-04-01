@@ -6,10 +6,12 @@ import logging
 import os
 
 from cassandra.cluster import Cluster
-from cassandra.policies import DCAwareRoundRobinPolicy
+from cassandra.policies import DCAwareRoundRobinPolicy, RoundRobinPolicy
 
 from dotenv import load_dotenv
 load_dotenv()
+
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +26,9 @@ def get_session():
     global _session
     if _session is None:
         cluster = Cluster(
-            contact_points=CASSANDRA_HOSTS,
-            load_balancing_policy=DCAwareRoundRobinPolicy(local_dc=CASSANDRA_DC),
+        contact_points=CASSANDRA_HOSTS,
+        load_balancing_policy=RoundRobinPolicy(),
+        protocol_version=5
         )
         _session = cluster.connect()
         _ensure_schema(_session)
@@ -36,10 +39,8 @@ def _ensure_schema(session) -> None:
     session.execute("""
         CREATE KEYSPACE IF NOT EXISTS traffic_service
         WITH replication = {
-            'class': 'NetworkTopologyStrategy',
-            'eu': 3,
-            'us': 3,
-            'apac': 3
+            'class': 'SimpleStrategy',
+            'replication_factor': 1
         }
     """)
     session.set_keyspace("traffic_service")
@@ -63,13 +64,16 @@ def _ensure_schema(session) -> None:
     logger.info(f"[{REGION.upper()}] Cassandra schema ready.")
 
 
+
 def update_booking_status(journey_id: str, status: str) -> None:
     try:
         session = get_session()
+        from datetime import datetime
+        date_bucket = datetime.now().strftime("%Y-%m-%d")
         session.execute("""
             UPDATE traffic_service.bookings
             SET status = %s, updated_at = toTimestamp(now())
-            WHERE journey_id = %s
-        """, (status, journey_id))
+            WHERE region = %s AND date_bucket = %s AND journey_id = %s
+        """, (status, REGION, date_bucket, UUID(journey_id)))
     except Exception as e:
         logger.error(f"Cassandra write failed for journey {journey_id}: {e}")
