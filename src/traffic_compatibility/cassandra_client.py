@@ -114,6 +114,7 @@ def get_journeys_by_segment(segment_id: str, date_bucket: str = None) -> list:
         rows = session.execute("""
             SELECT journey_id FROM traffic_service.journeys_by_segment
             WHERE segment_id = %s AND date_bucket = %s AND status = 'accepted'
+            ALLOW FILTERING
         """, (segment_id, date_bucket))
         return [str(row.journey_id) for row in rows]
     except Exception as e:
