@@ -4,6 +4,7 @@ and triggers compatibility checks.
 """
 
 from datetime import datetime
+import time
 import json
 import logging
 import os
@@ -61,29 +62,44 @@ def process_booking_request(event: dict) -> None:
     logger.info(f"[{REGION.upper()}] Journey {journey_id} -> {status} ({reason})")
 
 def start_consumer() -> None:
-    consumer = Consumer({
-        "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
-        "group.id": f"traffic-compatibility-{REGION}",
-        "auto.offset.reset": "earliest",
-        "enable.auto.commit": True,
-    })
-    consumer.subscribe(["journey.requested"])
-    logger.info(f"[{REGION.upper()}] Subscribed to journey.requested")
-
-    try:
-        while True:
-            msg = consumer.poll(timeout=1.0)
-            if msg is None:
-                continue
-            if msg.error():
-                if msg.error().code() == KafkaError._PARTITION_EOF:
+    retries = 0
+    max_retries = 10
+    
+    while retries < max_retries:
+        try:
+            consumer = Consumer({
+                "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
+                "group.id": f"traffic-compatibility-{REGION}",
+                "auto.offset.reset": "earliest",
+                "enable.auto.commit": True,
+            })
+            consumer.subscribe(["journey.requested"])
+            logger.info(f"[{REGION.upper()}] Subscribed to journey.requested")
+            
+            while True:
+                msg = consumer.poll(timeout=1.0)
+                if msg is None:
                     continue
-                logger.error(f"Kafka error: {msg.error()}")
-                continue
+                if msg.error():
+                    if msg.error().code() == KafkaError._PARTITION_EOF:
+                        continue
+                    logger.error(f"Kafka error: {msg.error()}")
+                    continue
+                try:
+                    event = json.loads(msg.value().decode("utf-8"))
+                    process_booking_request(event)
+                except Exception as e:
+                    logger.error(f"Failed to process message: {e}")
+
+        except Exception as e:
+            retries += 1
+            wait = 2 ** retries
+            logger.warning(f"[{REGION.upper()}] Kafka consumer failed (attempt {retries}/{max_retries}), retrying in {wait}s: {e}")
+            time.sleep(wait)
+        finally:
             try:
-                event = json.loads(msg.value().decode("utf-8"))
-                process_booking_request(event)
-            except Exception as e:
-                logger.error(f"Failed to process message: {e}")
-    finally:
-        consumer.close()
+                consumer.close()
+            except Exception:
+                pass
+
+    logger.error(f"[{REGION.upper()}] Kafka consumer failed after {max_retries} retries, giving up.")

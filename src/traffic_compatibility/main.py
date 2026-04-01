@@ -26,7 +26,8 @@ from src.traffic_compatibility.cassandra_client import (
     save_road_closure,
     delete_road_closure,
     save_traffic_condition,
-    load_state_from_cassandra
+    load_state_from_cassandra,
+    cancel_journey 
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -162,6 +163,7 @@ def emergency_override(override: EmergencyOverride):
             status="cancelled",
             reason=f"emergency_override: {override.reason}"
         )
+        cancel_journey(journey_id, date_bucket)
         logger.warning(f"[{REGION.upper()}] Cancelled journey {journey_id} due to emergency override")
 
     return {

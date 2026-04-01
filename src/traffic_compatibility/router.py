@@ -7,6 +7,7 @@ Road graph is cached in memory and refreshed on startup.
 
 import logging
 import os
+import pickle
 from datetime import datetime
 
 import networkx as nx
@@ -16,23 +17,28 @@ logger = logging.getLogger(__name__)
 
 REGION = os.getenv("REGION", "eu")
 
-# In-memory road graph cache
-_graph = None
-
+GRAPH_CACHE_PATH = "road_graph.pkl"
 
 def get_graph():
-    """Load and cache the road graph for the local area."""
     global _graph
     if _graph is None:
-        logger.info(f"[{REGION.upper()}] Loading road graph from OSM...")
-        try:
-            # Load road network for Dublin (or relevant area)
-            # In production: load from pre-processed file per region
-            _graph = ox.graph_from_place("Dublin, Ireland", network_type="drive")
-            logger.info(f"[{REGION.upper()}] Road graph loaded: {len(_graph.nodes)} nodes, {len(_graph.edges)} edges")
-        except Exception as e:
-            logger.error(f"[{REGION.upper()}] Failed to load road graph: {e}")
-            _graph = None
+        # Try loading from disk first
+        if os.path.exists(GRAPH_CACHE_PATH):
+            logger.info(f"[{REGION.upper()}] Loading road graph from disk cache...")
+            with open(GRAPH_CACHE_PATH, "rb") as f:
+                _graph = pickle.load(f)
+            logger.info(f"[{REGION.upper()}] Road graph loaded from cache: {len(_graph.nodes)} nodes")
+        else:
+            logger.info(f"[{REGION.upper()}] Downloading road graph from OSM...")
+            try:
+                _graph = ox.graph_from_place("Dublin, Ireland", network_type="drive")
+                # Save to disk for next restart
+                with open(GRAPH_CACHE_PATH, "wb") as f:
+                    pickle.dump(_graph, f)
+                logger.info(f"[{REGION.upper()}] Road graph saved to disk: {len(_graph.nodes)} nodes, {len(_graph.edges)} edges")
+            except Exception as e:
+                logger.error(f"[{REGION.upper()}] Failed to load road graph: {e}")
+                _graph = None
     return _graph
 
 

@@ -4,14 +4,15 @@ Cassandra client - reads and writes booking status.
 
 import logging
 import os
+import time
+from uuid import UUID
+from datetime import datetime
 
 from cassandra.cluster import Cluster
-from cassandra.policies import DCAwareRoundRobinPolicy, RoundRobinPolicy
-
+from cassandra.policies import RoundRobinPolicy
 from dotenv import load_dotenv
-load_dotenv()
 
-from uuid import UUID
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +23,26 @@ CASSANDRA_DC = os.getenv("CASSANDRA_DC", "eu")
 _session = None
 
 
+def _retry(func, retries=3, delay=1):
+    """Retry a function on failure with exponential backoff."""
+    for attempt in range(retries):
+        try:
+            return func()
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            wait = delay * (2 ** attempt)
+            logger.warning(f"Cassandra operation failed (attempt {attempt + 1}/{retries}), retrying in {wait}s: {e}")
+            time.sleep(wait)
+
+
 def get_session():
     global _session
     if _session is None:
         cluster = Cluster(
-        contact_points=CASSANDRA_HOSTS,
-        load_balancing_policy=RoundRobinPolicy(),
-        protocol_version=5
+            contact_points=CASSANDRA_HOSTS,
+            load_balancing_policy=RoundRobinPolicy(),
+            protocol_version=5
         )
         _session = cluster.connect()
         _ensure_schema(_session)
@@ -85,7 +99,6 @@ def _ensure_schema(session) -> None:
             PRIMARY KEY (segment_id)
         )
     """)
-
     session.execute("""
         CREATE TABLE IF NOT EXISTS traffic_conditions (
             segment_id TEXT,
@@ -97,38 +110,39 @@ def _ensure_schema(session) -> None:
     logger.info(f"[{REGION.upper()}] Cassandra schema ready.")
 
 
-
 def update_booking_status(journey_id: str, status: str, date_bucket: str = None) -> None:
-    from datetime import datetime
     if date_bucket is None:
         date_bucket = datetime.now().strftime("%Y-%m-%d")
     try:
-        session = get_session()
-        session.execute("""
-            UPDATE traffic_service.bookings
-            SET status = %s, updated_at = toTimestamp(now())
-            WHERE region = %s AND date_bucket = %s AND journey_id = %s
-        """, (status, REGION, date_bucket, UUID(journey_id)))
+        def _write():
+            session = get_session()
+            session.execute("""
+                UPDATE traffic_service.bookings
+                SET status = %s, updated_at = toTimestamp(now())
+                WHERE region = %s AND date_bucket = %s AND journey_id = %s
+            """, (status, REGION, date_bucket, UUID(journey_id)))
+        _retry(_write)
     except Exception as e:
         logger.error(f"Cassandra write failed for journey {journey_id}: {e}")
 
+
 def write_journey_segment(journey_id: str, segment_id: str, date_bucket: str = None) -> None:
-    from datetime import datetime
     if date_bucket is None:
         date_bucket = datetime.now().strftime("%Y-%m-%d")
     try:
-        session = get_session()
-        session.execute("""
-            INSERT INTO traffic_service.journeys_by_segment
-            (segment_id, date_bucket, journey_id, region, status, updated_at)
-            VALUES (%s, %s, %s, %s, %s, toTimestamp(now()))
-        """, (segment_id, date_bucket, UUID(journey_id), REGION, "accepted"))
+        def _write():
+            session = get_session()
+            session.execute("""
+                INSERT INTO traffic_service.journeys_by_segment
+                (segment_id, date_bucket, journey_id, region, status, updated_at)
+                VALUES (%s, %s, %s, %s, %s, toTimestamp(now()))
+            """, (segment_id, date_bucket, UUID(journey_id), REGION, "accepted"))
+        _retry(_write)
     except Exception as e:
         logger.error(f"Cassandra segment write failed: {e}")
 
 
 def get_journeys_by_segment(segment_id: str, date_bucket: str = None) -> list:
-    from datetime import datetime
     if date_bucket is None:
         date_bucket = datetime.now().strftime("%Y-%m-%d")
     try:
@@ -142,46 +156,86 @@ def get_journeys_by_segment(segment_id: str, date_bucket: str = None) -> list:
     except Exception as e:
         logger.error(f"Cassandra segment query failed: {e}")
         return []
-    
-def save_road_closure(closure) -> None:
-    from datetime import datetime
+
+
+def cancel_journey(journey_id: str, date_bucket: str = None) -> None:
+    if date_bucket is None:
+        date_bucket = datetime.now().strftime("%Y-%m-%d")
     try:
-        session = get_session()
-        session.execute("""
-            INSERT INTO traffic_service.road_closures
-            (segment_id, valid_until, start_lat, start_lon, end_lat, end_lon, reason, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, toTimestamp(now()))
-        """, (
-            closure.segment_id,
-            datetime.fromisoformat(closure.valid_until),
-            closure.start_lat,
-            closure.start_lon,
-            closure.end_lat,
-            closure.end_lon,
-            closure.reason
-        ))
+        def _write():
+            session = get_session()
+            session.execute("""
+                UPDATE traffic_service.bookings
+                SET status = 'cancelled', updated_at = toTimestamp(now())
+                WHERE region = %s AND date_bucket = %s AND journey_id = %s
+            """, (REGION, date_bucket, UUID(journey_id)))
+        _retry(_write)
+    except Exception as e:
+        logger.error(f"Failed to cancel journey {journey_id} in bookings: {e}")
+
+    try:
+        def _write_segment():
+            session = get_session()
+            rows = session.execute("""
+                SELECT segment_id FROM traffic_service.journeys_by_segment
+                WHERE journey_id = %s
+                ALLOW FILTERING
+            """, (UUID(journey_id),))
+            for row in rows:
+                session.execute("""
+                    UPDATE traffic_service.journeys_by_segment
+                    SET status = 'cancelled'
+                    WHERE segment_id = %s AND date_bucket = %s AND journey_id = %s
+                """, (row.segment_id, date_bucket, UUID(journey_id)))
+        _retry(_write_segment)
+    except Exception as e:
+        logger.error(f"Failed to cancel journey {journey_id} in journeys_by_segment: {e}")
+
+
+def save_road_closure(closure) -> None:
+    try:
+        def _write():
+            session = get_session()
+            session.execute("""
+                INSERT INTO traffic_service.road_closures
+                (segment_id, valid_until, start_lat, start_lon, end_lat, end_lon, reason, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, toTimestamp(now()))
+            """, (
+                closure.segment_id,
+                datetime.fromisoformat(closure.valid_until),
+                closure.start_lat,
+                closure.start_lon,
+                closure.end_lat,
+                closure.end_lon,
+                closure.reason
+            ))
+        _retry(_write)
     except Exception as e:
         logger.error(f"Failed to save road closure: {e}")
 
 
 def delete_road_closure(segment_id: str) -> None:
     try:
-        session = get_session()
-        session.execute("""
-            DELETE FROM traffic_service.road_closures WHERE segment_id = %s
-        """, (segment_id,))
+        def _write():
+            session = get_session()
+            session.execute("""
+                DELETE FROM traffic_service.road_closures WHERE segment_id = %s
+            """, (segment_id,))
+        _retry(_write)
     except Exception as e:
         logger.error(f"Failed to delete road closure: {e}")
 
 
 def save_traffic_condition(segment_id: str, congestion_level: int) -> None:
     try:
-        session = get_session()
-        session.execute("""
-            INSERT INTO traffic_service.traffic_conditions
-            (segment_id, congestion_level, updated_at)
-            VALUES (%s, %s, toTimestamp(now()))
-        """, (segment_id, congestion_level))
+        def _write():
+            session = get_session()
+            session.execute("""
+                INSERT INTO traffic_service.traffic_conditions
+                (segment_id, congestion_level, updated_at)
+                VALUES (%s, %s, toTimestamp(now()))
+            """, (segment_id, congestion_level))
+        _retry(_write)
     except Exception as e:
         logger.error(f"Failed to save traffic condition: {e}")
 
@@ -192,7 +246,13 @@ def load_state_from_cassandra() -> tuple[list, dict]:
         session = get_session()
         closures_rows = session.execute("SELECT * FROM traffic_service.road_closures")
         conditions_rows = session.execute("SELECT * FROM traffic_service.traffic_conditions")
-        return list(closures_rows), {row.segment_id: row.congestion_level for row in conditions_rows}
+
+        conditions = {
+            row.segment_id: int(row.congestion_level)
+            for row in conditions_rows
+        }
+
+        return list(closures_rows), conditions
     except Exception as e:
         logger.error(f"Failed to load state from Cassandra: {e}")
         return [], {}
