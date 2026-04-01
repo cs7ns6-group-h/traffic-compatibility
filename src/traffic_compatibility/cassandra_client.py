@@ -72,6 +72,28 @@ def _ensure_schema(session) -> None:
             PRIMARY KEY ((segment_id, date_bucket), journey_id)
         )
     """)
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS road_closures (
+            segment_id TEXT,
+            valid_until TIMESTAMP,
+            start_lat DOUBLE,
+            start_lon DOUBLE,
+            end_lat DOUBLE,
+            end_lon DOUBLE,
+            reason TEXT,
+            created_at TIMESTAMP,
+            PRIMARY KEY (segment_id)
+        )
+    """)
+
+    session.execute("""
+        CREATE TABLE IF NOT EXISTS traffic_conditions (
+            segment_id TEXT,
+            congestion_level INT,
+            updated_at TIMESTAMP,
+            PRIMARY KEY (segment_id)
+        )
+    """)
     logger.info(f"[{REGION.upper()}] Cassandra schema ready.")
 
 
@@ -120,3 +142,57 @@ def get_journeys_by_segment(segment_id: str, date_bucket: str = None) -> list:
     except Exception as e:
         logger.error(f"Cassandra segment query failed: {e}")
         return []
+    
+def save_road_closure(closure) -> None:
+    from datetime import datetime
+    try:
+        session = get_session()
+        session.execute("""
+            INSERT INTO traffic_service.road_closures
+            (segment_id, valid_until, start_lat, start_lon, end_lat, end_lon, reason, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, toTimestamp(now()))
+        """, (
+            closure.segment_id,
+            datetime.fromisoformat(closure.valid_until),
+            closure.start_lat,
+            closure.start_lon,
+            closure.end_lat,
+            closure.end_lon,
+            closure.reason
+        ))
+    except Exception as e:
+        logger.error(f"Failed to save road closure: {e}")
+
+
+def delete_road_closure(segment_id: str) -> None:
+    try:
+        session = get_session()
+        session.execute("""
+            DELETE FROM traffic_service.road_closures WHERE segment_id = %s
+        """, (segment_id,))
+    except Exception as e:
+        logger.error(f"Failed to delete road closure: {e}")
+
+
+def save_traffic_condition(segment_id: str, congestion_level: int) -> None:
+    try:
+        session = get_session()
+        session.execute("""
+            INSERT INTO traffic_service.traffic_conditions
+            (segment_id, congestion_level, updated_at)
+            VALUES (%s, %s, toTimestamp(now()))
+        """, (segment_id, congestion_level))
+    except Exception as e:
+        logger.error(f"Failed to save traffic condition: {e}")
+
+
+def load_state_from_cassandra() -> tuple[list, dict]:
+    """Load road closures and traffic conditions from Cassandra on startup."""
+    try:
+        session = get_session()
+        closures_rows = session.execute("SELECT * FROM traffic_service.road_closures")
+        conditions_rows = session.execute("SELECT * FROM traffic_service.traffic_conditions")
+        return list(closures_rows), {row.segment_id: row.congestion_level for row in conditions_rows}
+    except Exception as e:
+        logger.error(f"Failed to load state from Cassandra: {e}")
+        return [], {}

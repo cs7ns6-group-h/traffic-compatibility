@@ -30,34 +30,37 @@ def compute_route(origin: dict, destination: dict) -> dict | None:
     }
 
 
+from datetime import datetime
+
 def check_compatibility(route: dict, departure_time: str) -> tuple[bool, str]:
-    """
-    Check whether a route is compatible with current conditions.
-    Reads road_closures and traffic_conditions from main.py shared state.
-    Returns (accepted: bool, reason: str)
-    """
     if route is None:
         return False, "no_route"
 
-    # Import shared state from main (populated by Traffic Authority API)
+    from src.traffic_compatibility.state import road_closures, traffic_conditions
+
+    # Parse departure time
     try:
-        from src.traffic_compatibility.state import road_closures, traffic_conditions
-    except ImportError:
-        road_closures = []
-        traffic_conditions = {}
+        departure_dt = datetime.fromisoformat(departure_time)
+    except (TypeError, ValueError):
+        departure_dt = datetime.now()
 
     segments = route.get("segments", [])
-    closed_segment_ids = {c.segment_id for c in road_closures}
 
     for seg in segments:
         sid = seg.get("segment_id")
 
-        # Check road closures
-        if sid in closed_segment_ids:
-            logger.info(f"[{REGION.upper()}] Segment {sid} is closed")
-            return False, "road_closure"
+        # Check road closures — only if closure is still valid at departure time
+        for closure in road_closures:
+            if closure.segment_id == sid:
+                try:
+                    valid_until = datetime.fromisoformat(closure.valid_until)
+                    if departure_dt <= valid_until:
+                        logger.info(f"[{REGION.upper()}] Segment {sid} closed until {valid_until}")
+                        return False, "road_closure"
+                except (TypeError, ValueError):
+                    return False, "road_closure"
 
-        # Check congestion (reject if > 90%)
+        # Check congestion
         congestion = traffic_conditions.get(sid, 0)
         if congestion > 90:
             logger.info(f"[{REGION.upper()}] Segment {sid} too congested ({congestion}%)")
