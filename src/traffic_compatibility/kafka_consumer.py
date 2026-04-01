@@ -3,6 +3,7 @@ Kafka consumer - subscribes to journey.requested topic
 and triggers compatibility checks.
 """
 
+from datetime import datetime
 import json
 import logging
 import os
@@ -11,8 +12,7 @@ from confluent_kafka import Consumer, KafkaError
 
 from src.traffic_compatibility.router import compute_route, check_compatibility
 from src.traffic_compatibility.kafka_producer import publish_decision
-from src.traffic_compatibility.cassandra_client import update_booking_status
-
+from src.traffic_compatibility.cassandra_client import update_booking_status, write_journey_segment
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -27,7 +27,7 @@ def process_booking_request(event: dict) -> None:
     origin = event.get("origin")
     destination = event.get("destination")
     departure_time = event.get("departure_time")
-
+    date_bucket = event.get("date_bucket", datetime.now().strftime("%Y-%m-%d"))
     logger.info(f"[{REGION.upper()}] Processing journey {journey_id}: {origin} -> {destination}")
 
     # 1. Compute route
@@ -51,9 +51,14 @@ def process_booking_request(event: dict) -> None:
     )
 
     # 4. Persist to Cassandra
-    update_booking_status(journey_id, status)
-    logger.info(f"[{REGION.upper()}] Journey {journey_id} -> {status} ({reason})")
+    update_booking_status(journey_id, status, date_bucket)
 
+    # After publish_decision, if accepted:
+    if accepted:
+        for seg in route.get("segments", []):
+            write_journey_segment(journey_id, seg["segment_id"], date_bucket)
+
+    logger.info(f"[{REGION.upper()}] Journey {journey_id} -> {status} ({reason})")
 
 def start_consumer() -> None:
     consumer = Consumer({

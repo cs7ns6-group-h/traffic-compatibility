@@ -23,16 +23,13 @@ from src.traffic_compatibility.kafka_producer import publish_decision
 from src.traffic_compatibility.cassandra_client import update_booking_status
 from src.traffic_compatibility.router import compute_route, check_compatibility
 
+from src.traffic_compatibility.state import road_closures, traffic_conditions
+from src.traffic_compatibility.cassandra_client import get_journeys_by_segment
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 REGION = os.getenv("REGION", "eu")
-
-# Shared state — populated by Traffic Authority API endpoints
-# In production: persisted in Cassandra traffic_conditions table
-road_closures: list = []
-traffic_conditions: dict = {}
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -109,3 +106,28 @@ def emergency_override(override: EmergencyOverride):
     logger.warning(f"[{REGION.upper()}] Emergency override on segment: {override.segment_id}")
     # TODO: publish journey.cancelled for all active journeys on this segment
     return {"status": "override_issued", "segment_id": override.segment_id}
+
+@app.post("/authority/emergency")
+def emergency_override(override: EmergencyOverride):
+    from datetime import datetime
+    date_bucket = datetime.now().strftime("%Y-%m-%d")
+    
+    logger.warning(f"[{REGION.upper()}] Emergency override on segment: {override.segment_id}")
+    
+    # Trova tutti i journey attivi su questo segmento
+    journey_ids = get_journeys_by_segment(override.segment_id, date_bucket)
+    
+    # Pubblica journey.cancelled per ognuno
+    for journey_id in journey_ids:
+        publish_decision(
+            journey_id=journey_id,
+            status="cancelled",
+            reason=f"emergency_override: {override.reason}"
+        )
+        logger.warning(f"[{REGION.upper()}] Cancelled journey {journey_id} due to emergency override")
+    
+    return {
+        "status": "override_issued",
+        "segment_id": override.segment_id,
+        "journeys_cancelled": len(journey_ids)
+    }

@@ -41,7 +41,7 @@ def check_compatibility(route: dict, departure_time: str) -> tuple[bool, str]:
 
     # Import shared state from main (populated by Traffic Authority API)
     try:
-        from src.traffic_compatibility.main import road_closures, traffic_conditions
+        from src.traffic_compatibility.state import road_closures, traffic_conditions
     except ImportError:
         road_closures = []
         traffic_conditions = {}
