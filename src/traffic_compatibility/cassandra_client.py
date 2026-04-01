@@ -8,6 +8,9 @@ import os
 from cassandra.cluster import Cluster
 from cassandra.policies import DCAwareRoundRobinPolicy
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 REGION = os.getenv("REGION", "eu")

@@ -8,6 +8,9 @@ import os
 
 from confluent_kafka import Producer
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 REGION = os.getenv("REGION", "eu")
