@@ -28,6 +28,7 @@ def process_booking_request(event: dict) -> None:
     origin = event.get("origin")
     destination = event.get("destination")
     departure_time = event.get("departure_time")
+    vehicle_id = event.get("vehicle_id")
     date_bucket = event.get("date_bucket", datetime.now().strftime("%Y-%m-%d"))
     logger.info(f"[{REGION.upper()}] Processing journey {journey_id}: {origin} -> {destination}")
 
@@ -49,6 +50,7 @@ def process_booking_request(event: dict) -> None:
         status=status,
         reason=reason,
         route=route if accepted else None,
+        vehicle_id=vehicle_id,
     )
 
     # 4. Persist to Cassandra

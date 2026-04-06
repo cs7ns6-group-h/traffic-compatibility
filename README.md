@@ -43,6 +43,17 @@ uvicorn src.traffic_compatibility.main:app --reload
 | POST | `/authority/emergency` | Issue emergency override (Traffic Authority) |
 | GET | `/authority/segments/{segment_id}/journeys` | Get active journeys on a segment |
 
+## Kafka Topics
+
+| Topic | Role | Payload includes |
+|-------|------|-----------------|
+| `journey.requested` | Consumed | journey_id, vehicle_id, origin, destination, departure_time |
+| `journey.accepted` | Published | journey_id, vehicle_id, route, estimated_travel_minutes, region, reason |
+| `journey.rejected` | Published | journey_id, vehicle_id, region, reason |
+| `journey.cancelled` | Published | journey_id, region, reason (emergency_override only) |
+
+> `journey.accepted` includes `vehicle_id` to allow the Enforcement Service to update Redis without an additional Cassandra lookup.
+
 ## Environment Variables
 
 | Variable | Default | Description |

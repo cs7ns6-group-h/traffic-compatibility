@@ -31,14 +31,16 @@ def publish_decision(
     status: str,
     reason: str = "ok",
     route: dict | None = None,
+    vehicle_id: str | None = None,
 ) -> None:
     topic = f"journey.{status}"
     payload = {
-        "journey_id": journey_id,
-        "status": status,
-        "reason": reason,
-        "region": REGION,
-        "route": route,
+    "journey_id": journey_id,
+    "status": status,
+    "reason": reason,
+    "region": REGION,
+    "route": route,
+    "vehicle_id": vehicle_id,
     }
     producer = get_producer()
     producer.produce(
