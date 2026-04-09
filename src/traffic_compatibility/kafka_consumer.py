@@ -13,7 +13,7 @@ from confluent_kafka import Consumer, KafkaError
 
 from src.traffic_compatibility.router import compute_route, check_compatibility
 from src.traffic_compatibility.kafka_producer import publish_decision
-from src.traffic_compatibility.cassandra_client import update_booking_status, write_journey_segment
+from src.traffic_compatibility.cassandra_client import upsert_traffic_booking, write_journey_segment
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -29,6 +29,7 @@ def process_booking_request(event: dict) -> None:
     destination = event.get("destination")
     departure_time = event.get("departure_time")
     vehicle_id = event.get("vehicle_id")
+    driver_id = event.get("driver_id")
     date_bucket = event.get("date_bucket", datetime.now().strftime("%Y-%m-%d"))
     logger.info(f"[{REGION.upper()}] Processing journey {journey_id}: {origin} -> {destination}")
 
@@ -36,27 +37,56 @@ def process_booking_request(event: dict) -> None:
     route = compute_route(origin, destination)
     if route is None:
         logger.warning(f"[{REGION.upper()}] No route found for journey {journey_id}")
-        publish_decision(journey_id, "rejected", reason="no_route_found")
-        update_booking_status(journey_id, "rejected")
+        upsert_traffic_booking(
+            journey_id=journey_id,
+            date_bucket=date_bucket,
+            vehicle_id=vehicle_id,
+            driver_id=driver_id,
+            origin=origin,
+            destination=destination,
+            departure_time=departure_time,
+            status="rejected",
+            route=None,
+        )
+        publish_decision(
+            journey_id,
+            "rejected",
+            reason="no_route_found",
+            vehicle_id=vehicle_id,
+            date_bucket=date_bucket,
+            driver_id=driver_id,
+        )
         return
 
     # 2. Check compatibility
     accepted, reason = check_compatibility(route, departure_time)
 
-    # 3. Publish decision
+    # 3. Persist full row BEFORE Kafka so Enforcement / Cassandra lookups see vehicle_id
     status = "accepted" if accepted else "rejected"
+    upsert_traffic_booking(
+        journey_id=journey_id,
+        date_bucket=date_bucket,
+        vehicle_id=vehicle_id,
+        driver_id=driver_id,
+        origin=origin,
+        destination=destination,
+        departure_time=departure_time,
+        status=status,
+        route=route if accepted else None,
+    )
+
+    # 4. Publish decision (after DB is consistent)
     publish_decision(
         journey_id=journey_id,
         status=status,
         reason=reason,
         route=route if accepted else None,
         vehicle_id=vehicle_id,
+        date_bucket=date_bucket,
+        driver_id=driver_id,
     )
 
-    # 4. Persist to Cassandra
-    update_booking_status(journey_id, status, date_bucket)
-
-    # After publish_decision, if accepted:
+    # 5. Segment index for emergency override / segment queries
     if accepted:
         for seg in route.get("segments", []):
             write_journey_segment(journey_id, seg["segment_id"], date_bucket)

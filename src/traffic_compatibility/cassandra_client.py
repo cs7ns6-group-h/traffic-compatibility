@@ -2,6 +2,7 @@
 Cassandra client - reads and writes booking status.
 """
 
+import json
 import logging
 import os
 import time
@@ -124,6 +125,75 @@ def update_booking_status(journey_id: str, status: str, date_bucket: str = None)
         _retry(_write)
     except Exception as e:
         logger.error(f"Cassandra write failed for journey {journey_id}: {e}")
+
+
+def _encode_location(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
+def _parse_departure_ts(departure_time: str | None):
+    if not departure_time:
+        return None
+    try:
+        return datetime.fromisoformat(departure_time.replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning(f"[{REGION}] Invalid departure_time for Cassandra: {departure_time}")
+        return None
+
+
+def upsert_traffic_booking(
+    journey_id: str,
+    date_bucket: str,
+    vehicle_id: str | None,
+    driver_id: str | None,
+    origin,
+    destination,
+    departure_time: str | None,
+    status: str,
+    route: dict | None = None,
+) -> None:
+    """
+    Upsert a full row in traffic_service.bookings so Enforcement and other readers
+    can resolve vehicle_id by journey_id (Kafka events are published after this write).
+    """
+    route_txt = json.dumps(route) if route is not None else None
+    dep_ts = _parse_departure_ts(departure_time)
+    driver_txt = str(driver_id) if driver_id is not None else None
+
+    try:
+        def _write():
+            session = get_session()
+            session.execute(
+                """
+                INSERT INTO traffic_service.bookings (
+                    region, date_bucket, journey_id,
+                    vehicle_id, driver_id, origin, destination,
+                    departure_time, status, route, created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, toTimestamp(now()), toTimestamp(now())
+                )
+                """,
+                (
+                    REGION,
+                    date_bucket,
+                    UUID(journey_id),
+                    vehicle_id,
+                    driver_txt,
+                    _encode_location(origin),
+                    _encode_location(destination),
+                    dep_ts,
+                    status,
+                    route_txt,
+                ),
+            )
+
+        _retry(_write)
+    except Exception as e:
+        logger.error(f"[{REGION}] Upsert traffic_service.bookings failed for {journey_id}: {e}")
 
 
 def write_journey_segment(journey_id: str, segment_id: str, date_bucket: str = None) -> None:
