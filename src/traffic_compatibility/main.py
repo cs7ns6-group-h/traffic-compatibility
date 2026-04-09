@@ -150,12 +150,14 @@ def submit_traffic(update: TrafficUpdate):
 
 @app.post("/authority/emergency", summary="Issue emergency override")
 def emergency_override(override: EmergencyOverride):
-    from datetime import datetime
-    date_bucket = datetime.now().strftime("%Y-%m-%d")
+    from datetime import datetime, timedelta
+    today = datetime.now()
+    # Search today and the next 7 days to catch journeys regardless of their date_bucket
+    date_buckets = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(8)]
 
     logger.warning(f"[{REGION.upper()}] Emergency override on segment: {override.segment_id}")
 
-    journey_ids = get_journeys_by_segment(override.segment_id, date_bucket)
+    journey_ids = get_journeys_by_segment(override.segment_id, date_buckets)
 
     for journey_id in journey_ids:
         publish_decision(
@@ -163,7 +165,7 @@ def emergency_override(override: EmergencyOverride):
             status="cancelled",
             reason=f"emergency_override: {override.reason}"
         )
-        cancel_journey(journey_id, date_bucket)
+        cancel_journey(journey_id)
         logger.warning(f"[{REGION.upper()}] Cancelled journey {journey_id} due to emergency override")
 
     return {
@@ -175,12 +177,12 @@ def emergency_override(override: EmergencyOverride):
 
 @app.get("/authority/segments/{segment_id}/journeys", summary="Get active journeys on segment")
 def get_segment_journeys(segment_id: str):
-    from datetime import datetime
-    date_bucket = datetime.now().strftime("%Y-%m-%d")
-    journey_ids = get_journeys_by_segment(segment_id, date_bucket)
+    from datetime import datetime, timedelta
+    today = datetime.now()
+    date_buckets = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(8)]
+    journey_ids = get_journeys_by_segment(segment_id, date_buckets)
     return {
         "segment_id": segment_id,
-        "date_bucket": date_bucket,
         "active_journeys": journey_ids,
         "count": len(journey_ids)
     }

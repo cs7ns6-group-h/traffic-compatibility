@@ -142,17 +142,25 @@ def write_journey_segment(journey_id: str, segment_id: str, date_bucket: str = N
         logger.error(f"Cassandra segment write failed: {e}")
 
 
-def get_journeys_by_segment(segment_id: str, date_bucket: str = None) -> list:
-    if date_bucket is None:
-        date_bucket = datetime.now().strftime("%Y-%m-%d")
+def get_journeys_by_segment(segment_id: str, date_buckets: list[str] = None) -> list:
+    """Return accepted journey IDs on a segment across the given date buckets.
+
+    If date_buckets is None, defaults to today only.
+    Pass multiple buckets when the exact booking date is unknown (e.g. enforcement).
+    """
+    if date_buckets is None:
+        date_buckets = [datetime.now().strftime("%Y-%m-%d")]
     try:
         session = get_session()
-        rows = session.execute("""
-            SELECT journey_id FROM traffic_service.journeys_by_segment
-            WHERE segment_id = %s AND date_bucket = %s AND status = 'accepted'
-            ALLOW FILTERING
-        """, (segment_id, date_bucket))
-        return [str(row.journey_id) for row in rows]
+        journey_ids = []
+        for date_bucket in date_buckets:
+            rows = session.execute("""
+                SELECT journey_id FROM traffic_service.journeys_by_segment
+                WHERE segment_id = %s AND date_bucket = %s AND status = 'accepted'
+                ALLOW FILTERING
+            """, (segment_id, date_bucket))
+            journey_ids.extend(str(row.journey_id) for row in rows)
+        return journey_ids
     except Exception as e:
         logger.error(f"Cassandra segment query failed: {e}")
         return []
@@ -177,7 +185,7 @@ def cancel_journey(journey_id: str, date_bucket: str = None) -> None:
         def _write_segment():
             session = get_session()
             rows = session.execute("""
-                SELECT segment_id FROM traffic_service.journeys_by_segment
+                SELECT segment_id, date_bucket FROM traffic_service.journeys_by_segment
                 WHERE journey_id = %s
                 ALLOW FILTERING
             """, (UUID(journey_id),))
@@ -186,7 +194,7 @@ def cancel_journey(journey_id: str, date_bucket: str = None) -> None:
                     UPDATE traffic_service.journeys_by_segment
                     SET status = 'cancelled'
                     WHERE segment_id = %s AND date_bucket = %s AND journey_id = %s
-                """, (row.segment_id, date_bucket, UUID(journey_id)))
+                """, (row.segment_id, row.date_bucket, UUID(journey_id)))
         _retry(_write_segment)
     except Exception as e:
         logger.error(f"Failed to cancel journey {journey_id} in journeys_by_segment: {e}")
