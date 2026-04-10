@@ -110,6 +110,56 @@ def _ensure_schema(session) -> None:
     logger.info(f"[{REGION.upper()}] Cassandra schema ready.")
 
 
+def upsert_booking(
+    journey_id: str,
+    status: str,
+    date_bucket: str = None,
+    vehicle_id: str = None,
+    driver_id: str = None,
+    origin: dict = None,
+    destination: dict = None,
+    departure_time: str = None,
+    route: dict = None,
+) -> None:
+    """Full INSERT (upsert) of a booking row. Must be called BEFORE publishing to Kafka
+    so that downstream consumers (enforcement) can immediately look up the row."""
+    import json as _json
+    if date_bucket is None:
+        date_bucket = datetime.now().strftime("%Y-%m-%d")
+    try:
+        dep_ts = None
+        if departure_time:
+            try:
+                dep_ts = datetime.fromisoformat(departure_time)
+            except (TypeError, ValueError):
+                pass
+
+        def _write():
+            session = get_session()
+            session.execute("""
+                INSERT INTO traffic_service.bookings
+                (region, date_bucket, journey_id, vehicle_id, driver_id,
+                 origin, destination, departure_time, status, route,
+                 created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        toTimestamp(now()), toTimestamp(now()))
+            """, (
+                REGION,
+                date_bucket,
+                UUID(journey_id),
+                vehicle_id,
+                UUID(driver_id) if driver_id else None,
+                _json.dumps(origin) if origin else None,
+                _json.dumps(destination) if destination else None,
+                dep_ts,
+                status,
+                _json.dumps(route) if route else None,
+            ))
+        _retry(_write)
+    except Exception as e:
+        logger.error(f"Cassandra upsert failed for journey {journey_id}: {e}")
+
+
 def update_booking_status(journey_id: str, status: str, date_bucket: str = None) -> None:
     if date_bucket is None:
         date_bucket = datetime.now().strftime("%Y-%m-%d")

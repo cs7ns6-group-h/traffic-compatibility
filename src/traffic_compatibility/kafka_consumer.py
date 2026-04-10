@@ -13,7 +13,7 @@ from confluent_kafka import Consumer, KafkaError
 
 from src.traffic_compatibility.router import compute_route, check_compatibility
 from src.traffic_compatibility.kafka_producer import publish_decision
-from src.traffic_compatibility.cassandra_client import update_booking_status, write_journey_segment
+from src.traffic_compatibility.cassandra_client import upsert_booking, update_booking_status, write_journey_segment
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -29,6 +29,7 @@ def process_booking_request(event: dict) -> None:
     destination = event.get("destination")
     departure_time = event.get("departure_time")
     vehicle_id = event.get("vehicle_id")
+    driver_id = event.get("driver_id")
     date_bucket = event.get("date_bucket", datetime.now().strftime("%Y-%m-%d"))
     logger.info(f"[{REGION.upper()}] Processing journey {journey_id}: {origin} -> {destination}")
 
@@ -36,30 +37,43 @@ def process_booking_request(event: dict) -> None:
     route = compute_route(origin, destination)
     if route is None:
         logger.warning(f"[{REGION.upper()}] No route found for journey {journey_id}")
-        publish_decision(journey_id, "rejected", reason="no_route_found")
-        update_booking_status(journey_id, "rejected")
+        upsert_booking(journey_id, "rejected", date_bucket=date_bucket,
+                       vehicle_id=vehicle_id, driver_id=driver_id,
+                       origin=origin, destination=destination,
+                       departure_time=departure_time)
+        publish_decision(journey_id, "rejected", reason="no_route_found",
+                         vehicle_id=vehicle_id, date_bucket=date_bucket)
         return
 
     # 2. Check compatibility
     accepted, reason = check_compatibility(route, departure_time)
-
-    # 3. Publish decision
     status = "accepted" if accepted else "rejected"
+
+    # 3. Persist to Cassandra BEFORE publishing Kafka (enforcement needs the row immediately)
+    upsert_booking(
+        journey_id=journey_id,
+        status=status,
+        date_bucket=date_bucket,
+        vehicle_id=vehicle_id,
+        driver_id=driver_id,
+        origin=origin,
+        destination=destination,
+        departure_time=departure_time,
+        route=route if accepted else None,
+    )
+    if accepted:
+        for seg in route.get("segments", []):
+            write_journey_segment(journey_id, seg["segment_id"], date_bucket)
+
+    # 4. Publish decision (row is already in Cassandra)
     publish_decision(
         journey_id=journey_id,
         status=status,
         reason=reason,
         route=route if accepted else None,
         vehicle_id=vehicle_id,
+        date_bucket=date_bucket,
     )
-
-    # 4. Persist to Cassandra
-    update_booking_status(journey_id, status, date_bucket)
-
-    # After publish_decision, if accepted:
-    if accepted:
-        for seg in route.get("segments", []):
-            write_journey_segment(journey_id, seg["segment_id"], date_bucket)
 
     logger.info(f"[{REGION.upper()}] Journey {journey_id} -> {status} ({reason})")
 
