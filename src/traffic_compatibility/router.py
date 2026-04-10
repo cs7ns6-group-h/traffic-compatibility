@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 REGION = os.getenv("REGION", "eu")
 _graph = None
-GRAPH_CACHE_PATH = "road_graph.pkl"
+GRAPH_CACHE_PATH = os.getenv("GRAPH_CACHE_PATH", "road_graph.pkl")
 
 def get_graph():
     global _graph
