@@ -31,7 +31,7 @@ def get_graph():
         else:
             logger.info(f"[{REGION.upper()}] Downloading road graph from OSM...")
             try:
-                _graph = ox.graph_from_place("Dublin, Ireland", network_type="drive")
+                _graph = ox.graph_from_place("Ireland", network_type="drive")
                 # Save to disk for next restart
                 with open(GRAPH_CACHE_PATH, "wb") as f:
                     pickle.dump(_graph, f)
