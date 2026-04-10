@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from src.traffic_compatibility.kafka_consumer import start_consumer
 from src.traffic_compatibility.kafka_producer import publish_decision
+from src.traffic_compatibility.router import get_graph
 from src.traffic_compatibility.state import road_closures, traffic_conditions
 from src.traffic_compatibility.cassandra_client import (
     get_journeys_by_segment,
@@ -45,6 +46,10 @@ async def lifespan(app: FastAPI):
     road_closures.extend(saved_closures)
     traffic_conditions.update(saved_conditions)
     logger.info(f"[{REGION.upper()}] Loaded {len(road_closures)} closures and {len(traffic_conditions)} conditions from Cassandra.")
+
+    logger.info(f"[{REGION.upper()}] Pre-loading road graph (may take a while on first run)...")
+    get_graph()
+    logger.info(f"[{REGION.upper()}] Road graph ready.")
 
     consumer_thread = threading.Thread(target=start_consumer, daemon=True)
     consumer_thread.start()
