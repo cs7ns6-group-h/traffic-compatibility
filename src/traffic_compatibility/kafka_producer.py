@@ -33,6 +33,7 @@ def publish_decision(
     route: dict | None = None,
     vehicle_id: str | None = None,
     date_bucket: str | None = None,
+    driver_id: str | None = None,
 ) -> None:
     topic = f"journey.{status}"
     payload = {
@@ -43,6 +44,7 @@ def publish_decision(
         "route": route,
         "vehicle_id": vehicle_id,
         "date_bucket": date_bucket,
+        "driver_id": driver_id,
     }
     producer = get_producer()
     producer.produce(

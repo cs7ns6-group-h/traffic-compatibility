@@ -13,7 +13,7 @@ from confluent_kafka import Consumer, KafkaError
 
 from src.traffic_compatibility.router import compute_route, check_compatibility
 from src.traffic_compatibility.kafka_producer import publish_decision
-from src.traffic_compatibility.cassandra_client import upsert_booking, update_booking_status, write_journey_segment
+from src.traffic_compatibility.cassandra_client import upsert_booking, write_journey_segment
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -42,7 +42,8 @@ def process_booking_request(event: dict) -> None:
                        origin=origin, destination=destination,
                        departure_time=departure_time)
         publish_decision(journey_id, "rejected", reason="no_route_found",
-                         vehicle_id=vehicle_id, date_bucket=date_bucket)
+                         vehicle_id=vehicle_id, date_bucket=date_bucket,
+                         driver_id=driver_id)
         return
 
     # 2. Check compatibility
@@ -73,6 +74,7 @@ def process_booking_request(event: dict) -> None:
         route=route if accepted else None,
         vehicle_id=vehicle_id,
         date_bucket=date_bucket,
+        driver_id=driver_id,
     )
 
     logger.info(f"[{REGION.upper()}] Journey {journey_id} -> {status} ({reason})")
