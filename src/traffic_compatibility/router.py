@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 REGION = os.getenv("REGION", "eu")
 _graph = None
 GRAPH_CACHE_PATH = os.getenv("GRAPH_CACHE_PATH", "road_graph.pkl")
+GRAPH_PLACE = os.getenv("GRAPH_PLACE", "Dublin, Ireland")
 
 def get_graph():
     global _graph
@@ -29,9 +30,9 @@ def get_graph():
                 _graph = pickle.load(f)
             logger.info(f"[{REGION.upper()}] Road graph loaded from cache: {len(_graph.nodes)} nodes")
         else:
-            logger.info(f"[{REGION.upper()}] Downloading road graph from OSM...")
+            logger.info(f"[{REGION.upper()}] Downloading road graph from OSM for '{GRAPH_PLACE}'...")
             try:
-                _graph = ox.graph_from_place("Ireland", network_type="drive")
+                _graph = ox.graph_from_place(GRAPH_PLACE, network_type="drive")
                 # Save to disk for next restart
                 with open(GRAPH_CACHE_PATH, "wb") as f:
                     pickle.dump(_graph, f)
